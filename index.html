@@ -322,25 +322,32 @@ function speakChunk(text, lang, rate){
     let done=false; const fin=()=>{ if(!done){done=true; res();} };
     u.onend = fin; u.onerror = fin;
     speechSynthesis.speak(u);
+    try{ speechSynthesis.resume(); }catch(e){}  // iOS a veces deja el motor pausado
     setTimeout(fin, 200 + text.length*90 + 600); // salvavidas si el motor se cuelga
   });
 }
 const wait = ms => new Promise(r=>setTimeout(r,ms));
 
-/* Warm-up: en iOS/Safari la PRIMERA locución tras un silencio suele
-   perderse; enviamos una locución muda para "despertar" el motor. */
+/* Desbloqueo iOS: la voz sintetizada solo se habilita si la primera
+   locución ocurre DENTRO de un toque del usuario. Esta función se llama
+   desde los botones (gesto) con una locución muda; después de eso,
+   el tutor puede hablar libremente aunque llegue tras la API. */
 let ttsWarm = false;
 function warmTTS(){
   if(ttsWarm) return Promise.resolve();
   ttsWarm = true;
   return new Promise(res=>{
-    const u = new SpeechSynthesisUtterance('.');
+    const u = new SpeechSynthesisUtterance(' ');
     u.volume = 0; u.rate = 2;
     u.onend = res; u.onerror = res;
     speechSynthesis.speak(u);
+    try{ speechSynthesis.resume(); }catch(e){}
     setTimeout(res, 250);
   });
 }
+// desbloqueo también al primer toque en cualquier parte de la página
+document.addEventListener('touchend', ()=>warmTTS(), {once:true});
+document.addEventListener('click', ()=>warmTTS(), {once:true});
 
 /* Divide la salida del tutor en segmentos: español vs idioma objetivo.
    Mismas tres capas que renderTutor: ⟦⟧ → "…" → todo español. */
@@ -368,7 +375,8 @@ function segment(text){
 
 async function speakTutor(text, msgEl){
   stopSpeech();
-  await warmTTS();            // despierta el motor para no perder la 1ª palabra
+  if(typeof stopListening==='function') stopListening(); // liberar el micrófono antes de hablar (iOS)
+  await warmTTS();
   speaking = true;
   const objLang = voiceSel.value;
   const segs = segment(text);
@@ -522,7 +530,7 @@ function submit(){
   inp.value=''; inp.style.height='46px';
   askTutor(t);
 }
-sendBtn.onclick = submit;
+sendBtn.onclick = ()=>{ warmTTS(); submit(); };
 inp.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); submit(); }});
 inp.addEventListener('input',()=>{ inp.style.height='46px'; inp.style.height=Math.min(inp.scrollHeight,110)+'px'; });
 replayBtn.onclick = ()=>{ if(lastTutorText){ const els=stage.querySelectorAll('.tutor'); speakTutor(lastTutorText, els[els.length-1]); } };
@@ -574,6 +582,7 @@ if(SR){
   };
   // el botón ALTERNA manos libres on/off
   micBtn.onclick = ()=>{
+    warmTTS();                      // desbloquea la voz de iOS dentro del gesto
     handsFree = !handsFree;
     micBtn.classList.toggle('hf', handsFree);
     if(handsFree){
